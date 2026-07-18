@@ -192,6 +192,13 @@ const T = {
 
 function fmt(n){ return '¥' + Math.round(n).toLocaleString('en-US'); }
 
+// Parses a "YYYY-MM-DD" string as a LOCAL date (avoids UTC shift bugs
+// that can push an entry into the wrong cycle near month/timezone boundaries).
+function parseLocalDate(str){
+  const parts = String(str).split('-').map(Number);
+  return new Date(parts[0], parts[1]-1, parts[2]);
+}
+
 function applyStaticLabels(){
   const t = T[lang];
   document.getElementById('mainTitle').textContent = t.title;
@@ -299,9 +306,9 @@ function render(){
   if(!range) return;
 
   const filtered = all.filter(e => {
-    const d = new Date(e.date);
+    const d = parseLocalDate(e.date);
     return d >= range.start && d <= new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate(), 23,59,59);
-  }).sort((a,b) => new Date(b.date) - new Date(a.date));
+  }).sort((a,b) => parseLocalDate(b.date) - parseLocalDate(a.date));
 
   let total = 0;
   const catTotals = {};
@@ -352,7 +359,7 @@ function render(){
     const row = document.createElement('div');
     row.className = 'entryRow';
     row.style.animationDelay = (i*0.03) + 's';
-    const d = new Date(e.date);
+    const d = parseLocalDate(e.date);
     const dateStr = d.toLocaleDateString(dateLocale, {day:'numeric', month:'short'});
     row.innerHTML = `
       <div style="display:flex; align-items:center; gap:10px; min-width:0;">
