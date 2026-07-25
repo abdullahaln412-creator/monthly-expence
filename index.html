@@ -155,6 +155,8 @@
     </div>
   </div>
 
+  <div id="sectionToggleRow" style="display:flex; gap:6px; margin-bottom:1.5rem; flex-wrap:wrap;"></div>
+
   <div class="card">
     <p class="title"><i class="ti ti-plus" style="color:#D85A30;"></i> <span id="lblAddExpense"></span></p>
     <div class="typeToggle">
@@ -247,6 +249,7 @@ let lang = localStorage.getItem('lang_pref_v1') || 'bn';
 let currentType = 'expense';
 let listFilter = 'all';
 let searchQuery = '';
+let sectionVisibility = JSON.parse(localStorage.getItem('section_visibility_v1') || '{"breakdown":true,"trend":true}');
 let editingId = null;
 let authMode = 'login'; // 'login' | 'signup'
 
@@ -298,7 +301,8 @@ const T = {
     recurringEvery:'প্রতি মাসের', recurringDel:'রিকারিং বন্ধ করুন',
     searchPh:'নোট দিয়ে সার্চ করুন...', searchEmpty:'কোনো ফলাফল পাওয়া যায়নি।',
     trend:'গত ৬ মাসের ট্রেন্ড', edit:'এডিট করুন', update:'আপডেট করুন', cancelEdit:'বাতিল',
-    exportCsv:'এক্সেল এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন'
+    exportCsv:'এক্সেল এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন',
+    toggleBreakdown:'খাত অনুযায়ী খরচ', toggleTrend:'ট্রেন্ড চার্ট'
   },
   en: {
     calendar:'1st to 30th/31st', mid:'15th to 15th',
@@ -319,7 +323,8 @@ const T = {
     recurringEvery:'Every', recurringDel:'Stop recurring',
     searchPh:'Search by note...', searchEmpty:'No matching entries found.',
     trend:'Last 6 months trend', edit:'Edit', update:'Update', cancelEdit:'Cancel',
-    exportCsv:'Export Excel', editHint:'Click an entry to edit it'
+    exportCsv:'Export Excel', editHint:'Click an entry to edit it',
+    toggleBreakdown:'Spending by category', toggleTrend:'Trend chart'
   }
 };
 
@@ -441,6 +446,22 @@ function applyStaticLabels(){
   document.getElementById('langBn').classList.toggle('active', lang==='bn');
   document.getElementById('langEn').classList.toggle('active', lang==='en');
 
+  const toggleRow = document.getElementById('sectionToggleRow');
+  toggleRow.innerHTML = `
+    <button type="button" class="filterBtn sectionToggleBtn" data-section="breakdown"><i class="ti ti-chart-bar" style="font-size:13px; margin-right:3px;"></i>${t.toggleBreakdown}</button>
+    <button type="button" class="filterBtn sectionToggleBtn" data-section="trend"><i class="ti ti-chart-line" style="font-size:13px; margin-right:3px;"></i>${t.toggleTrend}</button>`;
+  toggleRow.querySelectorAll('.sectionToggleBtn').forEach(b => {
+    const sec = b.getAttribute('data-section');
+    b.classList.toggle('active', sectionVisibility[sec]);
+    b.style.opacity = sectionVisibility[sec] ? '1' : '0.55';
+    b.addEventListener('click', () => {
+      sectionVisibility[sec] = !sectionVisibility[sec];
+      localStorage.setItem('section_visibility_v1', JSON.stringify(sectionVisibility));
+      applyStaticLabels();
+      render();
+    });
+  });
+
   applyAuthLabels();
 }
 
@@ -518,6 +539,7 @@ function renderTrend(){
   const t = T[lang];
   const wrap = document.getElementById('trendWrap');
   wrap.innerHTML = '';
+  if(!sectionVisibility.trend) return;
   if(all.length === 0) return;
 
   const locale = lang==='bn' ? 'bn-BD' : 'en-US';
@@ -676,7 +698,7 @@ function render(){
   }
 
   const catKeys = Object.keys(catTotals).sort((a,b) => catTotals[b]-catTotals[a]);
-  if(catKeys.length){
+  if(catKeys.length && sectionVisibility.breakdown){
     const bd = document.createElement('div');
     bd.className = 'card';
     bd.innerHTML = `<p class="title"><i class="ti ti-chart-bar" style="color:#7F77DD;"></i> ${t.breakdown}</p>`;
