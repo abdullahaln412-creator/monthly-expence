@@ -155,9 +155,6 @@
     </div>
   </div>
 
-  <div id="breakdownWrap"></div>
-  <div id="trendWrap"></div>
-
   <div class="card">
     <p class="title"><i class="ti ti-plus" style="color:#D85A30;"></i> <span id="lblAddExpense"></span></p>
     <div class="typeToggle">
@@ -191,6 +188,9 @@
   </div>
 
   <div id="recurringWrap"></div>
+
+  <div id="breakdownWrap"></div>
+  <div id="trendWrap"></div>
 
   <div id="listWrap">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -298,7 +298,7 @@ const T = {
     recurringEvery:'প্রতি মাসের', recurringDel:'রিকারিং বন্ধ করুন',
     searchPh:'নোট দিয়ে সার্চ করুন...', searchEmpty:'কোনো ফলাফল পাওয়া যায়নি।',
     trend:'গত ৬ মাসের ট্রেন্ড', edit:'এডিট করুন', update:'আপডেট করুন', cancelEdit:'বাতিল',
-    exportCsv:'CSV এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন'
+    exportCsv:'এক্সেল এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন'
   },
   en: {
     calendar:'1st to 30th/31st', mid:'15th to 15th',
@@ -319,7 +319,7 @@ const T = {
     recurringEvery:'Every', recurringDel:'Stop recurring',
     searchPh:'Search by note...', searchEmpty:'No matching entries found.',
     trend:'Last 6 months trend', edit:'Edit', update:'Update', cancelEdit:'Cancel',
-    exportCsv:'Export CSV', editHint:'Click an entry to edit it'
+    exportCsv:'Export Excel', editHint:'Click an entry to edit it'
   }
 };
 
@@ -907,28 +907,120 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const idx = parseInt(cyclePickerSel.value || 0);
   const range = currentOpts[idx];
   if(!range) return;
+  const cycleLabel = cyclePickerSel.options[idx] ? cyclePickerSel.options[idx].textContent : '';
   const rows = all.filter(e => {
     const d = parseLocalDate(e.date);
     return d >= range.start && d <= new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate(), 23,59,59);
   }).sort((a,b) => parseLocalDate(a.date) - parseLocalDate(b.date));
 
-  const header = lang==='bn'
-    ? ['তারিখ','ধরন','খাত','পরিমাণ (JPY)','নোট']
-    : ['Date','Type','Category','Amount (JPY)','Note'];
-  const csvLines = [header.join(',')];
+  let totalIncome = 0, totalExpense = 0;
+  const catTotals = {};
+  rows.forEach(e => {
+    if((e.type||'expense')==='income') totalIncome += Number(e.amount);
+    else { totalExpense += Number(e.amount); catTotals[e.category] = (catTotals[e.category]||0) + Number(e.amount); }
+  });
+  const balance = totalIncome - totalExpense;
+  const isBn = lang === 'bn';
+
+  const L = {
+    title: isBn ? 'মাসিক আয়-ব্যয় হিসাব' : 'Monthly Income & Expense',
+    income: isBn ? 'মোট আয়' : 'Total Income',
+    expense: isBn ? 'মোট খরচ' : 'Total Expense',
+    balance: isBn ? 'উদ্বৃত্ত' : 'Balance',
+    breakdown: isBn ? 'খাত অনুযায়ী খরচ' : 'Spending by Category',
+    category: isBn ? 'খাত' : 'Category',
+    amount: isBn ? 'পরিমাণ' : 'Amount',
+    pct: isBn ? 'শতাংশ' : '%',
+    details: isBn ? 'বিস্তারিত এন্ট্রি তালিকা' : 'Detailed Entries',
+    date: isBn ? 'তারিখ' : 'Date',
+    type: isBn ? 'ধরন' : 'Type',
+    note: isBn ? 'নোট' : 'Note',
+    incomeType: isBn ? 'আয়' : 'Income',
+    expenseType: isBn ? 'খরচ' : 'Expense'
+  };
+
+  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  let catRows = '';
+  Object.keys(catTotals).sort((a,b) => catTotals[b]-catTotals[a]).forEach(ck => {
+    const col = catByKey(ck, 'expense');
+    const pct = totalExpense > 0 ? ((catTotals[ck]/totalExpense)*100).toFixed(1) : '0.0';
+    catRows += `<tr>
+      <td style="background:${col.bar};color:#ffffff;font-weight:bold;padding:6px 10px;">${col.emoji} ${esc(catLabel(col))}</td>
+      <td style="text-align:right;padding:6px 10px;font-weight:bold;">${fmt(catTotals[ck])}</td>
+      <td style="text-align:right;padding:6px 10px;color:#666;">${pct}%</td>
+    </tr>`;
+  });
+
+  let entryRows = '';
   rows.forEach(e => {
     const type = e.type || 'expense';
     const col = catByKey(e.category, type);
-    const typeLabel = type === 'income' ? T[lang].typeIncome.replace(/[^\p{L}\s/]/gu,'').trim() : T[lang].typeExpense.replace(/[^\p{L}\s/]/gu,'').trim();
-    const line = [e.date, typeLabel, catLabel(col), e.amount, `"${(e.note||'').replace(/"/g,'""')}"`];
-    csvLines.push(line.join(','));
+    const rowBg = type === 'income' ? '#E6F7F0' : '#FDECEA';
+    const amtColor = type === 'income' ? '#0F7A52' : '#B23A22';
+    const sign = type === 'income' ? '+' : '−';
+    entryRows += `<tr style="background:${rowBg};">
+      <td style="padding:5px 10px;">${e.date}</td>
+      <td style="padding:5px 10px;font-weight:bold;color:${amtColor};">${type==='income'?L.incomeType:L.expenseType}</td>
+      <td style="padding:5px 10px;"><span style="background:${col.bar};color:#fff;padding:2px 8px;border-radius:10px;font-size:12px;">${col.emoji} ${esc(catLabel(col))}</span></td>
+      <td style="padding:5px 10px;text-align:right;font-weight:bold;color:${amtColor};">${sign} ${fmt(e.amount)}</td>
+      <td style="padding:5px 10px;color:#444;">${esc(e.note||'')}</td>
+    </tr>`;
   });
-  const csvContent = '\uFEFF' + csvLines.join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+  const html = `
+  <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+  <head><meta charset="UTF-8">
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; }
+    table { border-collapse: collapse; }
+    td, th { border: 1px solid #ddd; }
+  </style>
+  </head>
+  <body>
+    <table style="width:100%; margin-bottom:10px;">
+      <tr><td colspan="3" style="background:#161d27;color:#fff;font-size:18px;font-weight:bold;padding:12px;">💰 ${esc(L.title)} — ${esc(cycleLabel)}</td></tr>
+    </table>
+    <table style="margin-bottom:16px;">
+      <tr>
+        <td style="background:#0F5C46;color:#fff;font-weight:bold;padding:10px 20px;">${esc(L.income)}</td>
+        <td style="background:#8A2E1E;color:#fff;font-weight:bold;padding:10px 20px;">${esc(L.expense)}</td>
+        <td style="background:#453B8C;color:#fff;font-weight:bold;padding:10px 20px;">${esc(L.balance)}</td>
+      </tr>
+      <tr>
+        <td style="background:#E6F7F0;color:#0F5C46;font-size:16px;font-weight:bold;padding:10px 20px;">${fmt(totalIncome)}</td>
+        <td style="background:#FDECEA;color:#8A2E1E;font-size:16px;font-weight:bold;padding:10px 20px;">${fmt(totalExpense)}</td>
+        <td style="background:${balance<0?'#FDECEA':'#EDEBFB'};color:#453B8C;font-size:16px;font-weight:bold;padding:10px 20px;">${balance<0?'-':''}${fmt(Math.abs(balance))}</td>
+      </tr>
+    </table>
+    <table style="width:60%; margin-bottom:16px;">
+      <tr><td colspan="3" style="background:#384454;color:#fff;font-weight:bold;padding:8px 10px;">📊 ${esc(L.breakdown)}</td></tr>
+      <tr style="background:#f0f0f0;font-weight:bold;">
+        <td style="padding:6px 10px;">${esc(L.category)}</td>
+        <td style="padding:6px 10px;text-align:right;">${esc(L.amount)}</td>
+        <td style="padding:6px 10px;text-align:right;">${esc(L.pct)}</td>
+      </tr>
+      ${catRows}
+    </table>
+    <table style="width:100%;">
+      <tr><td colspan="5" style="background:#384454;color:#fff;font-weight:bold;padding:8px 10px;">📋 ${esc(L.details)}</td></tr>
+      <tr style="background:#f0f0f0;font-weight:bold;">
+        <td style="padding:6px 10px;">${esc(L.date)}</td>
+        <td style="padding:6px 10px;">${esc(L.type)}</td>
+        <td style="padding:6px 10px;">${esc(L.category)}</td>
+        <td style="padding:6px 10px;text-align:right;">${esc(L.amount)}</td>
+        <td style="padding:6px 10px;">${esc(L.note)}</td>
+      </tr>
+      ${entryRows}
+    </table>
+  </body>
+  </html>`;
+
+  const blob = new Blob(['\uFEFF' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `expenses_${cyclePickerSel.options[idx] ? cyclePickerSel.options[idx].value : idx}.csv`;
+  a.download = `expenses_${cyclePickerSel.options[idx] ? cyclePickerSel.options[idx].value : idx}.xls`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
