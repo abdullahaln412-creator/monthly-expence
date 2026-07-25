@@ -156,6 +156,7 @@
   </div>
 
   <div id="breakdownWrap"></div>
+  <div id="trendWrap"></div>
 
   <div class="card">
     <p class="title"><i class="ti ti-plus" style="color:#D85A30;"></i> <span id="lblAddExpense"></span></p>
@@ -172,6 +173,10 @@
       <select id="catIn"></select>
     </div>
     <input type="text" id="noteIn" placeholder="" />
+    <label id="recurringLabel" style="display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-secondary); cursor:pointer; margin-bottom:8px;">
+      <input type="checkbox" id="recurringIn" style="width:16px; height:16px; padding:0;" />
+      <span id="lblRecurring"></span>
+    </label>
     <div id="fileRow" style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
       <label for="fileIn" style="display:flex; align-items:center; gap:6px; font-size:13px; font-weight:500; color:#fff; cursor:pointer; background:#7F5AF0; border:none; border-radius:var(--radius); padding:8px 14px; height:auto; transition:transform 0.15s ease, background 0.15s ease;" onmouseover="this.style.background='#6B47DE'" onmouseout="this.style.background='#7F5AF0'">
         <i class="ti ti-paperclip"></i> <span id="lblAttach"></span>
@@ -179,12 +184,24 @@
       <input type="file" id="fileIn" accept="image/*,.pdf" style="display:none;" />
       <span id="fileNameOut" style="font-size:12px; color:var(--text-muted);"></span>
     </div>
-    <button id="addBtn"><i class="ti ti-plus"></i> <span id="lblAddBtn"></span></button>
+    <div style="display:flex; gap:8px;">
+      <button id="addBtn" style="flex:1;"><i class="ti ti-plus"></i> <span id="lblAddBtn"></span></button>
+      <button type="button" id="cancelEditBtn" style="display:none;"><i class="ti ti-x"></i></button>
+    </div>
   </div>
 
+  <div id="recurringWrap"></div>
+
   <div id="listWrap">
-    <p class="title" id="lblListTitle"></p>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+      <p class="title" id="lblListTitle" style="margin:0;"></p>
+      <button type="button" id="exportBtn" style="padding:4px 12px; font-size:12px; height:auto; display:flex; align-items:center; gap:4px;"><i class="ti ti-download"></i> <span id="lblExportCsv"></span></button>
+    </div>
     <div class="filterRow" id="filterRow"></div>
+    <div style="position:relative; margin-bottom:10px;">
+      <i class="ti ti-search" style="position:absolute; left:10px; top:50%; transform:translateY(-50%); font-size:15px; color:var(--text-muted);"></i>
+      <input type="text" id="searchIn" placeholder="" style="width:100%; padding-left:32px;" />
+    </div>
     <div id="entryList"></div>
   </div>
 </div>
@@ -196,7 +213,7 @@ import {
   getStorage, ref, uploadBytes, getDownloadURL, deleteObject
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc,
+  getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, getDocs,
   onSnapshot, query, orderBy, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -219,13 +236,18 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const storage = getStorage(app);
 const expensesRef = collection(db, "expenses");
+const recurringRef = collection(db, "recurring");
 
 let currentUser = null;
 let unsubscribeSnapshot = null;
+let unsubscribeRecurring = null;
 let all = [];
+let recurringTemplates = [];
 let lang = localStorage.getItem('lang_pref_v1') || 'bn';
 let currentType = 'expense';
 let listFilter = 'all';
+let searchQuery = '';
+let editingId = null;
 let authMode = 'login'; // 'login' | 'signup'
 
 const EXPENSE_CATS = [
@@ -271,7 +293,12 @@ const T = {
     errEmailInUse:'এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট আছে, লগইন করুন',
     errWrongPass:'ইমেইল অথবা পাসওয়ার্ড ভুল', errWeakPass:'পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে',
     errInvalidEmail:'সঠিক ইমেইল দিন', errGeneric:'সমস্যা হয়েছে, আবার চেষ্টা করুন',
-    attach:'ছবি/ডকুমেন্ট যোগ করুন', uploading:'আপলোড হচ্ছে...', viewFile:'দেখুন'
+    attach:'ছবি/ডকুমেন্ট যোগ করুন', uploading:'আপলোড হচ্ছে...', viewFile:'দেখুন',
+    recurring:'প্রতি মাসে রিপিট করুন', recurringList:'রিকারিং এন্ট্রি', recurringEmpty:'কোনো রিকারিং এন্ট্রি নেই।',
+    recurringEvery:'প্রতি মাসের', recurringDel:'রিকারিং বন্ধ করুন',
+    searchPh:'নোট দিয়ে সার্চ করুন...', searchEmpty:'কোনো ফলাফল পাওয়া যায়নি।',
+    trend:'গত ৬ মাসের ট্রেন্ড', edit:'এডিট করুন', update:'আপডেট করুন', cancelEdit:'বাতিল',
+    exportCsv:'CSV এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন'
   },
   en: {
     calendar:'1st to 30th/31st', mid:'15th to 15th',
@@ -287,7 +314,12 @@ const T = {
     errEmailInUse:'An account with this email already exists, please log in',
     errWrongPass:'Wrong email or password', errWeakPass:'Password must be at least 6 characters',
     errInvalidEmail:'Enter a valid email', errGeneric:'Something went wrong, try again',
-    attach:'Attach photo/document', uploading:'Uploading...', viewFile:'View'
+    attach:'Attach photo/document', uploading:'Uploading...', viewFile:'View',
+    recurring:'Repeat every month', recurringList:'Recurring entries', recurringEmpty:'No recurring entries yet.',
+    recurringEvery:'Every', recurringDel:'Stop recurring',
+    searchPh:'Search by note...', searchEmpty:'No matching entries found.',
+    trend:'Last 6 months trend', edit:'Edit', update:'Update', cancelEdit:'Cancel',
+    exportCsv:'Export CSV', editHint:'Click an entry to edit it'
   }
 };
 
@@ -382,6 +414,9 @@ function applyStaticLabels(){
   document.getElementById('amountIn').placeholder = t.amountPh;
   document.getElementById('noteIn').placeholder = t.notePh;
   document.getElementById('lblAttach').textContent = t.attach;
+  document.getElementById('lblRecurring').textContent = t.recurring;
+  document.getElementById('searchIn').placeholder = t.searchPh;
+  document.getElementById('lblExportCsv').textContent = t.exportCsv;
   document.getElementById('typeExpenseBtn').textContent = t.typeExpense;
   document.getElementById('typeIncomeBtn').textContent = t.typeIncome;
   document.getElementById('logoutBtn').textContent = t.logout;
@@ -479,6 +514,126 @@ function animateNumber(el, to){
   requestAnimationFrame(step);
 }
 
+function renderTrend(){
+  const t = T[lang];
+  const wrap = document.getElementById('trendWrap');
+  wrap.innerHTML = '';
+  if(all.length === 0) return;
+
+  const locale = lang==='bn' ? 'bn-BD' : 'en-US';
+  const now = new Date();
+  const months = [];
+  for(let i=5; i>=0; i--){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push({ year: d.getFullYear(), month: d.getMonth(), label: d.toLocaleDateString(locale, {month:'short'}) });
+  }
+
+  const monthData = months.map(m => {
+    let income = 0, expense = 0;
+    all.forEach(e => {
+      const d = parseLocalDate(e.date);
+      if(d.getFullYear() === m.year && d.getMonth() === m.month){
+        if((e.type||'expense') === 'income') income += Number(e.amount);
+        else expense += Number(e.amount);
+      }
+    });
+    return { ...m, income, expense };
+  });
+
+  const maxVal = Math.max(1, ...monthData.map(m => Math.max(m.income, m.expense)));
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  let rowsHtml = '';
+  monthData.forEach(m => {
+    const incPct = (m.income / maxVal) * 100;
+    const expPct = (m.expense / maxVal) * 100;
+    rowsHtml += `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px; font-weight:500;">${m.label}</div>
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:3px;">
+          <div style="width:34px; font-size:10px; color:#4FD9A8; text-align:right;">${lang==='bn'?'আয়':'In'}</div>
+          <div style="flex:1; background:var(--surface-1); border-radius:4px; height:10px; overflow:hidden;">
+            <div style="background:#25B98C; height:100%; width:${incPct}%; border-radius:4px; transition:width 0.5s ease;"></div>
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); min-width:52px;">${fmt(m.income)}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <div style="width:34px; font-size:10px; color:#E8836A; text-align:right;">${lang==='bn'?'খরচ':'Out'}</div>
+          <div style="flex:1; background:var(--surface-1); border-radius:4px; height:10px; overflow:hidden;">
+            <div style="background:#DE5B5A; height:100%; width:${expPct}%; border-radius:4px; transition:width 0.5s ease;"></div>
+          </div>
+          <div style="font-size:11px; color:var(--text-muted); min-width:52px;">${fmt(m.expense)}</div>
+        </div>
+      </div>`;
+  });
+  card.innerHTML = `<p class="title"><i class="ti ti-chart-line" style="color:#3E93DE;"></i> ${t.trend}</p>${rowsHtml}`;
+  wrap.appendChild(card);
+}
+
+function renderRecurring(){
+  const t = T[lang];
+  const wrap = document.getElementById('recurringWrap');
+  wrap.innerHTML = '';
+  if(recurringTemplates.length === 0) return;
+
+  const card = document.createElement('div');
+  card.className = 'card';
+  let itemsHtml = '';
+  recurringTemplates.forEach(rt => {
+    const col = catByKey(rt.category, rt.type || 'expense');
+    const dayLbl = lang==='bn' ? `${t.recurringEvery} ${rt.dayOfMonth} তারিখ` : `${t.recurringEvery} ${rt.dayOfMonth}${rt.dayOfMonth===1?'st':rt.dayOfMonth===2?'nd':rt.dayOfMonth===3?'rd':'th'}`;
+    itemsHtml += `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:0.5px solid var(--border);">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span class="pill" style="background:${col.bg}; color:${col.text800};">${col.emoji} ${catLabel(col)}</span>
+          <div style="min-width:0;">
+            <p style="font-size:13px; margin:0;">${rt.note || catLabel(col)} — ${fmt(rt.amount)}</p>
+            <p style="font-size:11px; color:var(--text-muted); margin:0;">${dayLbl}</p>
+          </div>
+        </div>
+        <button data-rid="${rt.id}" class="stopRecurBtn" style="width:28px; height:28px; padding:0; display:flex; align-items:center; justify-content:center; flex-shrink:0;" aria-label="${t.recurringDel}"><i class="ti ti-x"></i></button>
+      </div>`;
+  });
+  card.innerHTML = `<p class="title"><i class="ti ti-repeat" style="color:#8378E8;"></i> ${t.recurringList}</p>${itemsHtml}`;
+  wrap.appendChild(card);
+
+  wrap.querySelectorAll('.stopRecurBtn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const rid = btn.getAttribute('data-rid');
+      if(!window.confirm(lang==='bn' ? 'এই রিকারিং এন্ট্রিটা বন্ধ করতে চান?' : 'Stop this recurring entry?')) return;
+      try { await deleteDoc(doc(db, "recurring", rid)); }
+      catch(err){ console.error('stop recurring failed', err); }
+    });
+  });
+}
+
+// Auto-generate this month's entry for each active recurring template,
+// if one hasn't already been created for the current month.
+async function processRecurring(){
+  if(!currentUser || recurringTemplates.length === 0) return;
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const lastDay = new Date(y, m+1, 0).getDate();
+
+  for(const rt of recurringTemplates){
+    const alreadyExists = all.some(e => e.recurringId === rt.id &&
+      (() => { const d = parseLocalDate(e.date); return d.getFullYear()===y && d.getMonth()===m; })());
+    if(alreadyExists) continue;
+
+    const day = Math.min(rt.dayOfMonth, lastDay);
+    const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    try {
+      await addDoc(expensesRef, {
+        date: dateStr, amount: rt.amount, category: rt.category, note: rt.note,
+        type: rt.type || 'expense', uid: currentUser.uid,
+        fileUrl: null, fileName: null, recurringId: rt.id,
+        createdAt: serverTimestamp()
+      });
+    } catch(err){ console.error('recurring auto-add failed', err); }
+  }
+}
+
 function render(){
   const t = T[lang];
   const idx = parseInt(cyclePickerSel.value || 0);
@@ -487,6 +642,7 @@ function render(){
   const breakdownEl = document.getElementById('breakdownWrap');
   listEl.innerHTML = '';
   breakdownEl.innerHTML = '';
+  renderTrend();
   if(!range) return;
 
   const inCycle = all.filter(e => {
@@ -542,43 +698,90 @@ function render(){
 
   const filtered = inCycle
     .filter(e => listFilter === 'all' ? true : (e.type || 'expense') === listFilter)
+    .filter(e => !searchQuery || (e.note || '').toLowerCase().includes(searchQuery.toLowerCase()))
     .sort((a,b) => parseLocalDate(b.date) - parseLocalDate(a.date));
 
   if(filtered.length === 0){
     const empty = document.createElement('p');
     empty.className = 'emptyMsg';
-    empty.textContent = t.empty;
+    empty.textContent = searchQuery ? t.searchEmpty : t.empty;
     listEl.appendChild(empty);
     return;
   }
 
   const dateLocale = lang==='bn' ? 'bn-BD' : 'en-US';
-  filtered.forEach((e, i) => {
-    const type = e.type || 'expense';
-    const col = catByKey(e.category, type);
-    const row = document.createElement('div');
-    row.className = 'entryRow';
-    row.style.animationDelay = (i*0.03) + 's';
-    const d = parseLocalDate(e.date);
-    const dateStr = d.toLocaleDateString(dateLocale, {day:'numeric', month:'short'});
-    const sign = type === 'income' ? '+' : '−';
-    const amountColor = type === 'income' ? '#4FD9A8' : '#E8836A';
-    const attachHtml = e.fileUrl
-      ? `<a href="${e.fileUrl}" target="_blank" rel="noopener" style="font-size:11px; color:#378ADD; text-decoration:none; display:inline-flex; align-items:center; gap:2px;"><i class="ti ti-paperclip" style="font-size:12px;"></i> ${T[lang].viewFile}</a>`
-      : '';
-    row.innerHTML = `
-      <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-        <span class="pill" style="background:${col.bg}; color:${col.text800};">${col.emoji} ${catLabel(col)}</span>
-        <div style="min-width:0;">
-          ${e.note ? `<p class="entryNote">${e.note}</p>` : ''}
-          <p class="entryDate">${dateStr} ${attachHtml}</p>
+  const today = new Date(); today.setHours(0,0,0,0);
+  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate()-1);
+
+  function dayLabel(d){
+    const dd = new Date(d); dd.setHours(0,0,0,0);
+    if(dd.getTime() === today.getTime()) return lang==='bn' ? 'আজ' : 'Today';
+    if(dd.getTime() === yesterday.getTime()) return lang==='bn' ? 'গতকাল' : 'Yesterday';
+    return dd.toLocaleDateString(dateLocale, {weekday:'long', day:'numeric', month:'short'});
+  }
+
+  // Group entries by date string, preserving the date-desc order already applied
+  const groups = [];
+  let lastKey = null;
+  filtered.forEach(e => {
+    if(e.date !== lastKey){
+      groups.push({ dateKey: e.date, items: [] });
+      lastKey = e.date;
+    }
+    groups[groups.length-1].items.push(e);
+  });
+
+  groups.forEach((group, gi) => {
+    const groupDate = parseLocalDate(group.dateKey);
+    let dayIncome = 0, dayExpense = 0;
+    group.items.forEach(e => { if((e.type||'expense')==='income') dayIncome += Number(e.amount); else dayExpense += Number(e.amount); });
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex; justify-content:space-between; align-items:baseline; margin:' + (gi===0 ? '0' : '18px') + ' 0 6px; padding-bottom:4px; border-bottom:0.5px solid var(--border);';
+    const dayNetParts = [];
+    if(dayIncome > 0) dayNetParts.push(`<span style="color:#4FD9A8;">+${fmt(dayIncome)}</span>`);
+    if(dayExpense > 0) dayNetParts.push(`<span style="color:#E8836A;">−${fmt(dayExpense)}</span>`);
+    header.innerHTML = `
+      <span style="font-size:12.5px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.03em;">${dayLabel(groupDate)}</span>
+      <span style="font-size:12px; display:flex; gap:8px;">${dayNetParts.join('')}</span>`;
+    listEl.appendChild(header);
+
+    group.items.forEach((e, i) => {
+      const type = e.type || 'expense';
+      const col = catByKey(e.category, type);
+      const row = document.createElement('div');
+      row.className = 'entryRow';
+      row.style.cssText += 'cursor:pointer;';
+      row.setAttribute('data-edit-id', e.id);
+      row.style.animationDelay = (i*0.03) + 's';
+      const sign = type === 'income' ? '+' : '−';
+      const amountColor = type === 'income' ? '#4FD9A8' : '#E8836A';
+      const attachHtml = e.fileUrl
+        ? `<a href="${e.fileUrl}" target="_blank" rel="noopener" style="font-size:11px; color:#378ADD; text-decoration:none; display:inline-flex; align-items:center; gap:2px; margin-top:2px;" onclick="event.stopPropagation();"><i class="ti ti-paperclip" style="font-size:12px;"></i> ${T[lang].viewFile}</a>`
+        : '';
+      const recurringBadge = e.recurringId ? `<i class="ti ti-repeat" style="font-size:12px; color:var(--text-muted); margin-left:4px;"></i>` : '';
+      row.innerHTML = `
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <span class="pill" style="background:${col.bg}; color:${col.text800};">${col.emoji} ${catLabel(col)}</span>
+          <div style="min-width:0;">
+            ${e.note ? `<p class="entryNote">${e.note}${recurringBadge}</p>` : (recurringBadge ? `<p class="entryNote">${recurringBadge}</p>` : '')}
+            ${attachHtml}
+          </div>
         </div>
-      </div>
-      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
-        <span class="entryAmount" style="color:${amountColor};">${sign} ${fmt(e.amount)}</span>
-        <button data-id="${e.id}" class="delBtn" aria-label="${t.del}"><i class="ti ti-trash"></i></button>
-      </div>`;
-    listEl.appendChild(row);
+        <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+          <span class="entryAmount" style="color:${amountColor};">${sign} ${fmt(e.amount)}</span>
+          <button data-id="${e.id}" class="delBtn" aria-label="${t.del}" onclick="event.stopPropagation();"><i class="ti ti-trash"></i></button>
+        </div>`;
+      listEl.appendChild(row);
+    });
+  });
+
+  document.querySelectorAll('.entryRow').forEach(row => {
+    row.addEventListener('click', () => {
+      const id = row.getAttribute('data-edit-id');
+      const entry = all.find(e => e.id === id);
+      if(entry) startEdit(entry);
+    });
   });
 
   document.querySelectorAll('.delBtn').forEach(btn => {
@@ -601,6 +804,35 @@ function render(){
   });
 }
 
+function startEdit(entry){
+  editingId = entry.id;
+  setFormType(entry.type || 'expense');
+  document.getElementById('dateIn').value = entry.date;
+  document.getElementById('amountIn').value = entry.amount;
+  document.getElementById('catIn').value = entry.category;
+  document.getElementById('noteIn').value = entry.note || '';
+  document.getElementById('recurringIn').checked = false;
+  document.getElementById('recurringLabel').style.display = 'none';
+  document.getElementById('fileNameOut').textContent = entry.fileName || '';
+  document.getElementById('lblAddBtn').textContent = T[lang].update;
+  document.getElementById('cancelEditBtn').style.display = 'block';
+  document.querySelector('.card').scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function cancelEdit(){
+  editingId = null;
+  document.getElementById('amountIn').value = '';
+  document.getElementById('noteIn').value = '';
+  document.getElementById('fileIn').value = '';
+  document.getElementById('fileNameOut').textContent = '';
+  document.getElementById('recurringIn').checked = false;
+  document.getElementById('recurringLabel').style.display = 'flex';
+  document.getElementById('dateIn').value = new Date().toISOString().slice(0,10);
+  document.getElementById('lblAddBtn').textContent = T[lang].addBtn;
+  document.getElementById('cancelEditBtn').style.display = 'none';
+}
+document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
+
 document.getElementById('dateIn').value = new Date().toISOString().slice(0,10);
 
 document.getElementById('fileIn').addEventListener('change', () => {
@@ -615,6 +847,7 @@ document.getElementById('addBtn').addEventListener('click', async () => {
   const category = document.getElementById('catIn').value;
   const note = document.getElementById('noteIn').value.trim();
   const file = document.getElementById('fileIn').files[0];
+  const wantsRecurring = document.getElementById('recurringIn').checked;
   if(!date || !amount || amount <= 0) return;
 
   const addBtn = document.getElementById('addBtn');
@@ -630,23 +863,78 @@ document.getElementById('addBtn').addEventListener('click', async () => {
       fileUrl = await getDownloadURL(fileRef);
       fileName = file.name;
     }
-    await addDoc(expensesRef, {
-      date, amount, category, note, type: currentType, uid: currentUser.uid,
-      fileUrl: fileUrl || null, fileName: fileName || null,
-      createdAt: serverTimestamp()
-    });
-    document.getElementById('amountIn').value = '';
-    document.getElementById('noteIn').value = '';
-    document.getElementById('fileIn').value = '';
-    document.getElementById('fileNameOut').textContent = '';
+
+    if(editingId){
+      const updateData = { date, amount, category, note, type: currentType };
+      if(fileUrl){ updateData.fileUrl = fileUrl; updateData.fileName = fileName; }
+      await updateDoc(doc(db, "expenses", editingId), updateData);
+      cancelEdit();
+    } else {
+      await addDoc(expensesRef, {
+        date, amount, category, note, type: currentType, uid: currentUser.uid,
+        fileUrl: fileUrl || null, fileName: fileName || null,
+        createdAt: serverTimestamp()
+      });
+      if(wantsRecurring){
+        const dayOfMonth = parseLocalDate(date).getDate();
+        await addDoc(recurringRef, {
+          uid: currentUser.uid, amount, category, note, type: currentType,
+          dayOfMonth, active: true, createdAt: serverTimestamp()
+        });
+      }
+      document.getElementById('amountIn').value = '';
+      document.getElementById('noteIn').value = '';
+      document.getElementById('fileIn').value = '';
+      document.getElementById('fileNameOut').textContent = '';
+      document.getElementById('recurringIn').checked = false;
+    }
   } catch(err){
-    console.error('add failed', err);
-    alert(lang==='bn' ? 'যোগ করতে সমস্যা হয়েছে' : 'Failed to add entry');
+    console.error('save failed', err);
+    alert(lang==='bn' ? 'সেভ করতে সমস্যা হয়েছে' : 'Failed to save entry');
   } finally {
     addBtn.disabled = false;
     addBtn.innerHTML = originalLabel;
+    if(!editingId) addBtn.innerHTML = `<i class="ti ti-plus"></i> <span id="lblAddBtn">${T[lang].addBtn}</span>`;
   }
 });
+
+document.getElementById('searchIn').addEventListener('input', (ev) => {
+  searchQuery = ev.target.value;
+  render();
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const idx = parseInt(cyclePickerSel.value || 0);
+  const range = currentOpts[idx];
+  if(!range) return;
+  const rows = all.filter(e => {
+    const d = parseLocalDate(e.date);
+    return d >= range.start && d <= new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate(), 23,59,59);
+  }).sort((a,b) => parseLocalDate(a.date) - parseLocalDate(b.date));
+
+  const header = lang==='bn'
+    ? ['তারিখ','ধরন','খাত','পরিমাণ (JPY)','নোট']
+    : ['Date','Type','Category','Amount (JPY)','Note'];
+  const csvLines = [header.join(',')];
+  rows.forEach(e => {
+    const type = e.type || 'expense';
+    const col = catByKey(e.category, type);
+    const typeLabel = type === 'income' ? T[lang].typeIncome.replace(/[^\p{L}\s/]/gu,'').trim() : T[lang].typeExpense.replace(/[^\p{L}\s/]/gu,'').trim();
+    const line = [e.date, typeLabel, catLabel(col), e.amount, `"${(e.note||'').replace(/"/g,'""')}"`];
+    csvLines.push(line.join(','));
+  });
+  const csvContent = '\uFEFF' + csvLines.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `expenses_${cyclePickerSel.options[idx] ? cyclePickerSel.options[idx].value : idx}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
 
 // ============================================================
 // AUTH STATE: switches between auth screen and app screen,
@@ -655,6 +943,7 @@ document.getElementById('addBtn').addEventListener('click', async () => {
 onAuthStateChanged(auth, (user) => {
   currentUser = user;
   if(unsubscribeSnapshot){ unsubscribeSnapshot(); unsubscribeSnapshot = null; }
+  if(unsubscribeRecurring){ unsubscribeRecurring(); unsubscribeRecurring = null; }
 
   if(user){
     document.getElementById('authScreen').style.display = 'none';
@@ -667,15 +956,24 @@ onAuthStateChanged(auth, (user) => {
       document.getElementById('syncDot').classList.remove('offline');
       document.getElementById('syncText').textContent = T[lang].online;
       render();
+      processRecurring();
     }, (error) => {
       console.error('sync error', error);
       document.getElementById('syncDot').classList.add('offline');
       document.getElementById('syncText').textContent = T[lang].offline;
     });
+
+    const rq = query(recurringRef, where("uid", "==", user.uid), where("active", "==", true));
+    unsubscribeRecurring = onSnapshot(rq, (snapshot) => {
+      recurringTemplates = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderRecurring();
+      processRecurring();
+    }, (error) => { console.error('recurring sync error', error); });
   } else {
     document.getElementById('appScreen').style.display = 'none';
     document.getElementById('authScreen').style.display = 'block';
     all = [];
+    recurringTemplates = [];
   }
 });
 
