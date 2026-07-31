@@ -182,10 +182,7 @@
       <input type="file" id="fileIn" accept="image/*,.pdf" style="display:none;" />
       <span id="fileNameOut" style="font-size:12px; color:var(--text-muted);"></span>
     </div>
-    <div style="display:flex; gap:8px;">
-      <button id="addBtn" style="flex:1;"><i class="ti ti-plus"></i> <span id="lblAddBtn"></span></button>
-      <button type="button" id="cancelEditBtn" style="display:none;"><i class="ti ti-x"></i></button>
-    </div>
+    <button id="addBtn"><i class="ti ti-plus"></i> <span id="lblAddBtn"></span></button>
   </div>
 
   <div id="sectionToggleRow" style="display:flex; gap:6px; margin-bottom:1.5rem; flex-wrap:wrap;"></div>
@@ -216,7 +213,7 @@ import {
   getStorage, ref, uploadBytes, getDownloadURL, deleteObject
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
 import {
-  getFirestore, collection, addDoc, deleteDoc, doc, updateDoc, getDocs,
+  getFirestore, collection, addDoc, deleteDoc, doc,
   onSnapshot, query, orderBy, where, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
@@ -251,7 +248,6 @@ let currentType = 'expense';
 let listFilter = 'all';
 let searchQuery = '';
 let sectionVisibility = JSON.parse(localStorage.getItem('section_visibility_v1') || '{"breakdown":true,"trend":true}');
-let editingId = null;
 let authMode = 'login'; // 'login' | 'signup'
 
 const EXPENSE_CATS = [
@@ -301,8 +297,8 @@ const T = {
     recurring:'প্রতি মাসে রিপিট করুন', recurringList:'রিকারিং এন্ট্রি', recurringEmpty:'কোনো রিকারিং এন্ট্রি নেই।',
     recurringEvery:'প্রতি মাসের', recurringDel:'রিকারিং বন্ধ করুন',
     searchPh:'নোট দিয়ে সার্চ করুন...', searchEmpty:'কোনো ফলাফল পাওয়া যায়নি।',
-    trend:'গত ৬ মাসের ট্রেন্ড', edit:'এডিট করুন', update:'আপডেট করুন', cancelEdit:'বাতিল',
-    exportCsv:'এক্সেল এক্সপোর্ট', editHint:'এন্ট্রিতে ক্লিক করে এডিট করুন',
+    trend:'গত ৬ মাসের ট্রেন্ড',
+    exportCsv:'এক্সেল এক্সপোর্ট',
     toggleBreakdown:'খাত অনুযায়ী খরচ', toggleTrend:'ট্রেন্ড চার্ট'
   },
   en: {
@@ -323,8 +319,8 @@ const T = {
     recurring:'Repeat every month', recurringList:'Recurring entries', recurringEmpty:'No recurring entries yet.',
     recurringEvery:'Every', recurringDel:'Stop recurring',
     searchPh:'Search by note...', searchEmpty:'No matching entries found.',
-    trend:'Last 6 months trend', edit:'Edit', update:'Update', cancelEdit:'Cancel',
-    exportCsv:'Export Excel', editHint:'Click an entry to edit it',
+    trend:'Last 6 months trend',
+    exportCsv:'Export Excel',
     toggleBreakdown:'Spending by category', toggleTrend:'Trend chart'
   }
 };
@@ -774,13 +770,11 @@ function render(){
       const col = catByKey(e.category, type);
       const row = document.createElement('div');
       row.className = 'entryRow';
-      row.style.cssText += 'cursor:pointer;';
-      row.setAttribute('data-edit-id', e.id);
       row.style.animationDelay = (i*0.03) + 's';
       const sign = type === 'income' ? '+' : '−';
       const amountColor = type === 'income' ? '#4FD9A8' : '#E8836A';
       const attachHtml = e.fileUrl
-        ? `<a href="${e.fileUrl}" target="_blank" rel="noopener" style="font-size:11px; color:#378ADD; text-decoration:none; display:inline-flex; align-items:center; gap:2px; margin-top:2px;" onclick="event.stopPropagation();"><i class="ti ti-paperclip" style="font-size:12px;"></i> ${T[lang].viewFile}</a>`
+        ? `<a href="${e.fileUrl}" target="_blank" rel="noopener" style="font-size:11px; color:#378ADD; text-decoration:none; display:inline-flex; align-items:center; gap:2px; margin-top:2px;"><i class="ti ti-paperclip" style="font-size:12px;"></i> ${T[lang].viewFile}</a>`
         : '';
       const recurringBadge = e.recurringId ? `<i class="ti ti-repeat" style="font-size:12px; color:var(--text-muted); margin-left:4px;"></i>` : '';
       row.innerHTML = `
@@ -793,17 +787,9 @@ function render(){
         </div>
         <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
           <span class="entryAmount" style="color:${amountColor};">${sign} ${fmt(e.amount)}</span>
-          <button data-id="${e.id}" class="delBtn" aria-label="${t.del}" onclick="event.stopPropagation();"><i class="ti ti-trash"></i></button>
+          <button data-id="${e.id}" class="delBtn" aria-label="${t.del}"><i class="ti ti-trash"></i></button>
         </div>`;
       listEl.appendChild(row);
-    });
-  });
-
-  document.querySelectorAll('.entryRow').forEach(row => {
-    row.addEventListener('click', () => {
-      const id = row.getAttribute('data-edit-id');
-      const entry = all.find(e => e.id === id);
-      if(entry) startEdit(entry);
     });
   });
 
@@ -826,35 +812,6 @@ function render(){
     });
   });
 }
-
-function startEdit(entry){
-  editingId = entry.id;
-  setFormType(entry.type || 'expense');
-  document.getElementById('dateIn').value = entry.date;
-  document.getElementById('amountIn').value = entry.amount;
-  document.getElementById('catIn').value = entry.category;
-  document.getElementById('noteIn').value = entry.note || '';
-  document.getElementById('recurringIn').checked = false;
-  document.getElementById('recurringLabel').style.display = 'none';
-  document.getElementById('fileNameOut').textContent = entry.fileName || '';
-  document.getElementById('lblAddBtn').textContent = T[lang].update;
-  document.getElementById('cancelEditBtn').style.display = 'block';
-  document.querySelector('.card').scrollIntoView({ behavior:'smooth', block:'start' });
-}
-
-function cancelEdit(){
-  editingId = null;
-  document.getElementById('amountIn').value = '';
-  document.getElementById('noteIn').value = '';
-  document.getElementById('fileIn').value = '';
-  document.getElementById('fileNameOut').textContent = '';
-  document.getElementById('recurringIn').checked = false;
-  document.getElementById('recurringLabel').style.display = 'flex';
-  document.getElementById('dateIn').value = new Date().toISOString().slice(0,10);
-  document.getElementById('lblAddBtn').textContent = T[lang].addBtn;
-  document.getElementById('cancelEditBtn').style.display = 'none';
-}
-document.getElementById('cancelEditBtn').addEventListener('click', cancelEdit);
 
 document.getElementById('dateIn').value = new Date().toISOString().slice(0,10);
 
@@ -887,37 +844,29 @@ document.getElementById('addBtn').addEventListener('click', async () => {
       fileName = file.name;
     }
 
-    if(editingId){
-      const updateData = { date, amount, category, note, type: currentType };
-      if(fileUrl){ updateData.fileUrl = fileUrl; updateData.fileName = fileName; }
-      await updateDoc(doc(db, "expenses", editingId), updateData);
-      cancelEdit();
-    } else {
-      await addDoc(expensesRef, {
-        date, amount, category, note, type: currentType, uid: currentUser.uid,
-        fileUrl: fileUrl || null, fileName: fileName || null,
-        createdAt: serverTimestamp()
+    await addDoc(expensesRef, {
+      date, amount, category, note, type: currentType, uid: currentUser.uid,
+      fileUrl: fileUrl || null, fileName: fileName || null,
+      createdAt: serverTimestamp()
+    });
+    if(wantsRecurring){
+      const dayOfMonth = parseLocalDate(date).getDate();
+      await addDoc(recurringRef, {
+        uid: currentUser.uid, amount, category, note, type: currentType,
+        dayOfMonth, active: true, createdAt: serverTimestamp()
       });
-      if(wantsRecurring){
-        const dayOfMonth = parseLocalDate(date).getDate();
-        await addDoc(recurringRef, {
-          uid: currentUser.uid, amount, category, note, type: currentType,
-          dayOfMonth, active: true, createdAt: serverTimestamp()
-        });
-      }
-      document.getElementById('amountIn').value = '';
-      document.getElementById('noteIn').value = '';
-      document.getElementById('fileIn').value = '';
-      document.getElementById('fileNameOut').textContent = '';
-      document.getElementById('recurringIn').checked = false;
     }
+    document.getElementById('amountIn').value = '';
+    document.getElementById('noteIn').value = '';
+    document.getElementById('fileIn').value = '';
+    document.getElementById('fileNameOut').textContent = '';
+    document.getElementById('recurringIn').checked = false;
   } catch(err){
-    console.error('save failed', err);
-    alert(lang==='bn' ? 'সেভ করতে সমস্যা হয়েছে' : 'Failed to save entry');
+    console.error('add failed', err);
+    alert(lang==='bn' ? 'যোগ করতে সমস্যা হয়েছে' : 'Failed to add entry');
   } finally {
     addBtn.disabled = false;
     addBtn.innerHTML = originalLabel;
-    if(!editingId) addBtn.innerHTML = `<i class="ti ti-plus"></i> <span id="lblAddBtn">${T[lang].addBtn}</span>`;
   }
 });
 
